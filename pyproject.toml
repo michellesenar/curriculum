@@ -1,0 +1,18 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "curriculum"
+version = "0.1.0"
+requires-python = ">=3.13"
+dependencies = [
+    "mcp>=2.3.0",
+    "pydantic>=2.14.1",
+]
+
+[project.scripts]
+curriculum = "curriculum.server:main"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/curriculum"]
