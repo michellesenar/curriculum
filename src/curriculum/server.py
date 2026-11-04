@@ -60,6 +60,63 @@ def get_curriculum() -> str:
 
 
 @mcp.tool()
+def log_topic(
+    name: str,
+    type: str,
+    author: str = "",
+    description: str = "",
+    tags: list[str] | None = None,
+) -> str:
+    """
+    Manually add a topic to the curriculum knowledge graph.
+    Use this for books, articles, concepts, or practices that weren't
+    captured during ingest or that you want to add proactively.
+
+    Args:
+        name: Title of the book, name of the concept, or short label for the topic.
+        type: One of 'book', 'article', 'concept', or 'practice'.
+        author: Author name, for books and articles.
+        description: A brief description of the topic and why it matters to the curriculum.
+        tags: List of thematic tags, e.g. ['anthropology', 'political economy'].
+    """
+    db.init_db(DB_PATH)
+
+    from curriculum.models import Topic as TopicModel
+    topic = db.save_topic(
+        TopicModel(
+            name=name,
+            type=type,
+            author=author or None,
+            description=description or None,
+            tags=tags or [],
+        ),
+        DB_PATH,
+    )
+    return json.dumps(topic.model_dump(), indent=2)
+
+
+@mcp.tool()
+def search_curriculum(query: str) -> str:
+    """
+    Search the curriculum knowledge graph by keyword or theme.
+    Searches across topic names, descriptions, and tags.
+
+    Args:
+        query: A keyword or phrase to search for, e.g. 'anthropology' or 'colonial'.
+    """
+    db.init_db(DB_PATH)
+    topics = db.search_topics(query, DB_PATH)
+
+    if not topics:
+        return f"No topics found matching '{query}'."
+
+    return json.dumps(
+        [t.model_dump() for t in topics],
+        indent=2,
+    )
+
+
+@mcp.tool()
 def link_topics(from_topic: str, to_topic: str, reason: str) -> str:
     """
     Record a directed connection between two topics with a reason explaining

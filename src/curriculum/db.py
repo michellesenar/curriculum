@@ -149,6 +149,23 @@ def conversation_exists(conversation_id: str, db_path: Path = DB_PATH) -> bool:
     return row is not None
 
 
+def search_topics(query: str, db_path: Path = DB_PATH) -> list[Topic]:
+    """Search topics by name, description, or tags. Case-insensitive substring match."""
+    with _get_connection(db_path) as conn:
+        rows = conn.execute(
+            """
+            SELECT * FROM topics
+            WHERE
+                LOWER(name)        LIKE LOWER(?)
+                OR LOWER(COALESCE(description, '')) LIKE LOWER(?)
+                OR LOWER(COALESCE(tags, ''))        LIKE LOWER(?)
+            ORDER BY name
+            """,
+            (f"%{query}%", f"%{query}%", f"%{query}%"),
+        ).fetchall()
+    return [_row_to_topic(row) for row in rows]
+
+
 def find_topic_by_name(name: str, db_path: Path = DB_PATH) -> Topic | None:
     """Look up a topic by name. Returns None if not found."""
     with _get_connection(db_path) as conn:
