@@ -5,6 +5,7 @@ from mcp.server.mcpserver import MCPServer
 
 from curriculum import db
 from curriculum.ingest import ingest_export
+from curriculum.models import Connection
 
 # Anchored to the project root regardless of where the server process starts.
 PROJECT_ROOT = Path(__file__).parent.parent.parent
@@ -56,6 +57,62 @@ def get_curriculum() -> str:
         [t.model_dump() for t in topics],
         indent=2,
     )
+
+
+@mcp.tool()
+def link_topics(from_topic: str, to_topic: str, reason: str) -> str:
+    """
+    Record a directed connection between two topics with a reason explaining
+    why one led to the other. Both topics must already exist in the curriculum.
+
+    Args:
+        from_topic: Name of the topic that led to the other.
+        to_topic: Name of the topic that was reached.
+        reason: A concise explanation of why from_topic led to to_topic.
+    """
+    db.init_db(DB_PATH)
+
+    source = db.find_topic_by_name(from_topic, DB_PATH)
+    if source is None:
+        return f"Topic not found: '{from_topic}'. Check get_curriculum for exact names."
+
+    target = db.find_topic_by_name(to_topic, DB_PATH)
+    if target is None:
+        return f"Topic not found: '{to_topic}'. Check get_curriculum for exact names."
+
+    if source.id == target.id:
+        return "Cannot link a topic to itself."
+
+    connection = db.save_connection(
+        Connection(
+            from_topic_id=source.id,
+            to_topic_id=target.id,
+            reason=reason,
+        ),
+        DB_PATH,
+    )
+
+    return json.dumps({
+        "linked": f"{source.name} → {target.name}",
+        "reason": connection.reason,
+        "connection_id": connection.id,
+    }, indent=2)
+
+
+@mcp.tool()
+def get_threads() -> str:
+    """
+    Return all connected chains of topics in the curriculum knowledge graph.
+    Each thread is a path from a root topic (nothing leads to it) through
+    connected topics, with the reason for each connection shown.
+    """
+    db.init_db(DB_PATH)
+    threads = db.get_threads(DB_PATH)
+
+    if not threads:
+        return "No connections recorded yet. Use link_topics to connect topics."
+
+    return json.dumps(threads, indent=2)
 
 
 def main() -> None:
