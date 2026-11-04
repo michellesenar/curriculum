@@ -42,3 +42,15 @@ class Conversation(BaseModel):
 class TopicMention(BaseModel):
     topic_id: int
     conversation_id: str
+
+
+class Recommendation(BaseModel):
+    id: int | None = None
+    title: str
+    author: str | None = None
+    reason: str
+    topic_id: int | None = None
+    source_conversation_id: str | None = None
+    created_at: str = Field(
+        default_factory=lambda: datetime.now(timezone.utc).isoformat()
+    )

@@ -1,7 +1,7 @@
 import sqlite3
 from pathlib import Path
 
-from curriculum.models import Connection, Conversation, Topic, TopicMention
+from curriculum.models import Connection, Conversation, Recommendation, Topic, TopicMention
 
 # Walk up from src/curriculum/db.py → src/curriculum → src → project root
 DB_PATH = Path(__file__).parent.parent.parent / "curriculum.db"
@@ -43,6 +43,18 @@ def init_db(db_path: Path = DB_PATH) -> None:
                 PRIMARY KEY (topic_id, conversation_id),
                 FOREIGN KEY (topic_id) REFERENCES topics(id),
                 FOREIGN KEY (conversation_id) REFERENCES conversations(id)
+            );
+
+            CREATE TABLE IF NOT EXISTS recommendations (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                title TEXT NOT NULL,
+                author TEXT,
+                reason TEXT NOT NULL,
+                topic_id INTEGER,
+                source_conversation_id TEXT,
+                created_at TEXT NOT NULL,
+                FOREIGN KEY (topic_id) REFERENCES topics(id),
+                FOREIGN KEY (source_conversation_id) REFERENCES conversations(id)
             );
 
             CREATE TABLE IF NOT EXISTS connections (
@@ -264,3 +276,62 @@ def get_threads(db_path: Path = DB_PATH) -> list[list[dict]]:
         dfs(root_id, [start], set())
 
     return threads
+
+
+def save_recommendation(rec: Recommendation, db_path: Path = DB_PATH) -> Recommendation:
+    """Insert a recommendation and return it with its database id set."""
+    with _get_connection(db_path) as conn:
+        cursor = conn.execute(
+            """
+            INSERT INTO recommendations
+                (title, author, reason, topic_id, source_conversation_id, created_at)
+            VALUES (?, ?, ?, ?, ?, ?)
+            """,
+            (
+                rec.title,
+                rec.author,
+                rec.reason,
+                rec.topic_id,
+                rec.source_conversation_id,
+                rec.created_at,
+            ),
+        )
+    return rec.model_copy(update={"id": cursor.lastrowid})
+
+
+def search_recommendations(query: str | None = None, db_path: Path = DB_PATH) -> list[Recommendation]:
+    """
+    Return recommendations matching a keyword search across title, author, and reason.
+    If query is empty or None, return all recommendations ordered by most recent first.
+    """
+    with _get_connection(db_path) as conn:
+        if not query:
+            rows = conn.execute(
+                "SELECT * FROM recommendations ORDER BY created_at DESC"
+            ).fetchall()
+        else:
+            pattern = f"%{query}%"
+            rows = conn.execute(
+                """
+                SELECT * FROM recommendations
+                WHERE
+                    LOWER(title)                       LIKE LOWER(?)
+                    OR LOWER(COALESCE(author, ''))     LIKE LOWER(?)
+                    OR LOWER(reason)                   LIKE LOWER(?)
+                ORDER BY created_at DESC
+                """,
+                (pattern, pattern, pattern),
+            ).fetchall()
+
+    return [
+        Recommendation(
+            id=row["id"],
+            title=row["title"],
+            author=row["author"],
+            reason=row["reason"],
+            topic_id=row["topic_id"],
+            source_conversation_id=row["source_conversation_id"],
+            created_at=row["created_at"],
+        )
+        for row in rows
+    ]

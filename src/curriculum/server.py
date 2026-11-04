@@ -5,7 +5,7 @@ from mcp.server.mcpserver import MCPServer
 
 from curriculum import db
 from curriculum.ingest import ingest_export
-from curriculum.models import Connection
+from curriculum.models import Connection, Recommendation
 
 # Anchored to the project root regardless of where the server process starts.
 PROJECT_ROOT = Path(__file__).parent.parent.parent
@@ -170,6 +170,70 @@ def get_threads() -> str:
         return "No connections recorded yet. Use link_topics to connect topics."
 
     return json.dumps(threads, indent=2)
+
+
+@mcp.tool()
+def save_recommendation(
+    title: str,
+    reason: str,
+    author: str = "",
+    topic_name: str = "",
+) -> str:
+    """
+    Save a book or reading recommendation that came up during a conversation.
+    Call this whenever a recommendation worth remembering surfaces — capture
+    the full context in 'reason' so it's searchable later.
+
+    Args:
+        title: Title of the recommended book or article.
+        reason: Full context for why it was recommended and what it connects to.
+                Be specific — this is what makes it findable months later.
+        author: Author name if known.
+        topic_name: Name of the curriculum topic this recommendation relates to, if any.
+    """
+    db.init_db(DB_PATH)
+
+    topic_id = None
+    if topic_name:
+        topic = db.find_topic_by_name(topic_name, DB_PATH)
+        if topic:
+            topic_id = topic.id
+
+    rec = db.save_recommendation(
+        Recommendation(
+            title=title,
+            author=author or None,
+            reason=reason,
+            topic_id=topic_id,
+        ),
+        DB_PATH,
+    )
+    return json.dumps(rec.model_dump(), indent=2)
+
+
+@mcp.tool()
+def get_recommendations(query: str = "") -> str:
+    """
+    Retrieve saved recommendations, optionally filtered by a keyword search.
+    Searches across title, author, and the full reason/context text.
+    Leave query empty to return all recommendations, most recent first.
+
+    Args:
+        query: Keyword or phrase to search for, e.g. 'hypomanic' or 'Vodou' or 'Scott'.
+    """
+    db.init_db(DB_PATH)
+    recs = db.search_recommendations(query or None, DB_PATH)
+
+    if not recs:
+        msg = "No recommendations found."
+        if query:
+            msg = f"No recommendations found matching '{query}'."
+        return msg
+
+    return json.dumps(
+        [r.model_dump() for r in recs],
+        indent=2,
+    )
 
 
 def main() -> None:
