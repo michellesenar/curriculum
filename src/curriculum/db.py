@@ -278,6 +278,64 @@ def get_threads(db_path: Path = DB_PATH) -> list[list[dict]]:
     return threads
 
 
+def update_topic(name: str, updates: dict, db_path: Path = DB_PATH) -> Topic | None:
+    """
+    Update fields on an existing topic. Only keys present in updates are changed.
+    Pass tags as a list[str] — serialization is handled here.
+    Returns the updated topic, or None if the topic wasn't found.
+    """
+    topic = find_topic_by_name(name, db_path)
+    if topic is None:
+        return None
+
+    allowed = {"name", "type", "author", "description", "tags"}
+    fields = {k: v for k, v in updates.items() if k in allowed}
+
+    if not fields:
+        return topic
+
+    if "tags" in fields:
+        fields["tags"] = ",".join(fields["tags"]) if fields["tags"] else None
+
+    set_clause = ", ".join(f"{k} = ?" for k in fields)
+    values = list(fields.values()) + [topic.id]
+
+    with _get_connection(db_path) as conn:
+        conn.execute(f"UPDATE topics SET {set_clause} WHERE id = ?", values)
+        new_name = fields.get("name", name)
+        row = conn.execute(
+            "SELECT * FROM topics WHERE name = ?", (new_name,)
+        ).fetchone()
+
+    return _row_to_topic(row) if row else None
+
+
+def delete_topic(name: str, db_path: Path = DB_PATH) -> bool:
+    """
+    Remove a topic and all its connections, mentions, and recommendation links.
+    Returns True if deleted, False if not found.
+    """
+    topic = find_topic_by_name(name, db_path)
+    if topic is None:
+        return False
+
+    with _get_connection(db_path) as conn:
+        conn.execute(
+            "DELETE FROM connections WHERE from_topic_id = ? OR to_topic_id = ?",
+            (topic.id, topic.id),
+        )
+        conn.execute(
+            "DELETE FROM topic_mentions WHERE topic_id = ?", (topic.id,)
+        )
+        conn.execute(
+            "UPDATE recommendations SET topic_id = NULL WHERE topic_id = ?",
+            (topic.id,),
+        )
+        conn.execute("DELETE FROM topics WHERE id = ?", (topic.id,))
+
+    return True
+
+
 def save_recommendation(rec: Recommendation, db_path: Path = DB_PATH) -> Recommendation:
     """Insert a recommendation and return it with its database id set."""
     with _get_connection(db_path) as conn:

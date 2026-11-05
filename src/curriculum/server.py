@@ -173,6 +173,70 @@ def get_threads() -> str:
 
 
 @mcp.tool()
+def update_topic(
+    name: str,
+    new_name: str = "",
+    type: str = "",
+    author: str = "",
+    description: str = "",
+    tags: list[str] | None = None,
+) -> str:
+    """
+    Update fields on an existing topic. Only fields you provide are changed —
+    leave everything else empty to keep current values.
+
+    Args:
+        name: Current exact name of the topic to update.
+        new_name: Rename the topic to this.
+        type: Correct the type — 'book', 'article', 'concept', or 'practice'.
+        author: Set or correct the author name.
+        description: Set or update the description.
+        tags: Replace the current tags with this list.
+    """
+    db.init_db(DB_PATH)
+
+    updates = {}
+    if new_name:
+        updates["name"] = new_name
+    if type:
+        updates["type"] = type
+    if author:
+        updates["author"] = author
+    if description:
+        updates["description"] = description
+    if tags is not None:
+        updates["tags"] = tags
+
+    if not updates:
+        return "No fields provided to update."
+
+    updated = db.update_topic(name, updates, DB_PATH)
+    if updated is None:
+        return f"Topic not found: '{name}'. Check get_curriculum for exact names."
+
+    return json.dumps(updated.model_dump(), indent=2)
+
+
+@mcp.tool()
+def delete_topic(name: str) -> str:
+    """
+    Remove a topic from the curriculum along with all its connections and mentions.
+    Use this to clean up extraction errors or topics that don't belong in the graph.
+    Recommendations linked to this topic are preserved but unlinked.
+
+    Args:
+        name: Exact name of the topic to delete.
+    """
+    db.init_db(DB_PATH)
+
+    deleted = db.delete_topic(name, DB_PATH)
+    if not deleted:
+        return f"Topic not found: '{name}'. Check get_curriculum for exact names."
+
+    return f"Deleted '{name}' and removed all its connections."
+
+
+@mcp.tool()
 def save_recommendation(
     title: str,
     reason: str,
