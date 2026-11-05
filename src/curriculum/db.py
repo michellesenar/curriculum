@@ -404,6 +404,17 @@ def update_recommendation(rec_id: int, updates: dict, db_path: Path = DB_PATH) -
     )
 
 
+def write_filter_keywords(keywords: list[str], config_path: Path) -> None:
+    """Overwrite the filter keywords file with the given list."""
+    config_path.parent.mkdir(parents=True, exist_ok=True)
+    lines = [
+        "# One keyword per line. Conversations matching any of these (in title or first message)",
+        "# will be processed during ingest. Everything else is skipped.",
+        "",
+    ] + sorted(set(kw.lower().strip() for kw in keywords if kw.strip()))
+    config_path.write_text("\n".join(lines) + "\n")
+
+
 def search_recommendations(query: str | None = None, db_path: Path = DB_PATH) -> list[Recommendation]:
     """
     Return recommendations matching a keyword search across title, author, and reason.

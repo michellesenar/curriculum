@@ -16,6 +16,34 @@ mcp = MCPServer("curriculum")
 
 
 @mcp.tool()
+def setup_curriculum(keywords: list[str]) -> str:
+    """
+    Set up the curriculum filter for a new user by writing their interest keywords.
+    Call this at the start of a new installation before any ingest.
+
+    Before calling this tool, expand the user's described interests into specific,
+    varied keywords — not just 'history' but 'colonialism', 'archaeology', 'empire'.
+    Aim for 30-60 keywords covering the full range of what they described.
+    The keywords are used to filter ChatGPT conversations during ingest, so specificity
+    matters: too broad and junk gets in, too narrow and relevant conversations get skipped.
+
+    Args:
+        keywords: List of lowercase keyword strings representing the user's interests.
+    """
+    if not keywords:
+        return "No keywords provided. Describe your interests and I'll generate a keyword list."
+
+    db.write_filter_keywords(keywords, CONFIG_PATH)
+
+    sorted_kws = sorted(set(kw.lower().strip() for kw in keywords if kw.strip()))
+    return json.dumps({
+        "status": "Filter keywords saved.",
+        "keyword_count": len(sorted_kws),
+        "keywords": sorted_kws,
+    }, indent=2)
+
+
+@mcp.tool()
 def ingest_conversations(export_path: str) -> str:
     """
     Ingest a ChatGPT conversations.json export into the curriculum database.
