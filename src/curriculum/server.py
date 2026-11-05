@@ -53,6 +53,9 @@ def ingest_conversations(export_path: str) -> str:
     Args:
         export_path: Absolute path to the conversations.json file.
     """
+    if not CONFIG_PATH.exists():
+        return "No filter keywords configured. Run setup_curriculum first to describe your interests."
+
     path = Path(export_path)
     if not path.exists():
         return f"File not found: {export_path}"

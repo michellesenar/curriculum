@@ -1,0 +1,15 @@
+# One keyword per line. Conversations matching any of these (in title or first message)
+# will be processed during ingest. Everything else is skipped.
+#
+# This is a template. Run setup_curriculum in Claude Desktop to generate your own
+# filter_topics.txt based on your interests. Or copy this file and edit it directly.
+#
+# Examples — replace with your own:
+
+# Reading
+book
+read
+novel
+author
+
+# Add your domains below:
