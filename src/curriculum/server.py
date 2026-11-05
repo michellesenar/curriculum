@@ -33,13 +33,12 @@ def setup_curriculum(keywords: list[str]) -> str:
     if not keywords:
         return "No keywords provided. Describe your interests and I'll generate a keyword list."
 
-    db.write_filter_keywords(keywords, CONFIG_PATH)
+    merged = db.write_filter_keywords(keywords, CONFIG_PATH)
 
-    sorted_kws = sorted(set(kw.lower().strip() for kw in keywords if kw.strip()))
     return json.dumps({
         "status": "Filter keywords saved.",
-        "keyword_count": len(sorted_kws),
-        "keywords": sorted_kws,
+        "keyword_count": len(merged),
+        "keywords": merged,
     }, indent=2)
 
 

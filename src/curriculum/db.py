@@ -404,15 +404,30 @@ def update_recommendation(rec_id: int, updates: dict, db_path: Path = DB_PATH) -
     )
 
 
-def write_filter_keywords(keywords: list[str], config_path: Path) -> None:
-    """Overwrite the filter keywords file with the given list."""
+def write_filter_keywords(keywords: list[str], config_path: Path) -> list[str]:
+    """
+    Merge keywords into the existing filter file, preserving current keywords.
+    Returns the full sorted list of keywords after merging.
+    """
+    existing: set[str] = set()
+    if config_path.exists():
+        for line in config_path.read_text().splitlines():
+            line = line.strip()
+            if line and not line.startswith("#"):
+                existing.add(line.lower())
+
+    merged = existing | {kw.lower().strip() for kw in keywords if kw.strip()}
+    sorted_kws = sorted(merged)
+
     config_path.parent.mkdir(parents=True, exist_ok=True)
     lines = [
         "# One keyword per line. Conversations matching any of these (in title or first message)",
         "# will be processed during ingest. Everything else is skipped.",
         "",
-    ] + sorted(set(kw.lower().strip() for kw in keywords if kw.strip()))
+    ] + sorted_kws
     config_path.write_text("\n".join(lines) + "\n")
+
+    return sorted_kws
 
 
 def search_recommendations(query: str | None = None, db_path: Path = DB_PATH) -> list[Recommendation]:
