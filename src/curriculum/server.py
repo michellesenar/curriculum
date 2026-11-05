@@ -237,6 +237,50 @@ def delete_topic(name: str) -> str:
 
 
 @mcp.tool()
+def update_recommendation(
+    id: int,
+    title: str = "",
+    author: str = "",
+    reason: str = "",
+    topic_name: str = "",
+) -> str:
+    """
+    Update fields on an existing recommendation. Use get_recommendations to
+    find the id first. Only provided fields are changed.
+
+    Args:
+        id: The numeric id of the recommendation to update.
+        title: Corrected title.
+        author: Corrected or added author.
+        reason: Updated context for why this was recommended.
+        topic_name: Name of a curriculum topic to link this recommendation to.
+    """
+    db.init_db(DB_PATH)
+
+    updates = {}
+    if title:
+        updates["title"] = title
+    if author:
+        updates["author"] = author
+    if reason:
+        updates["reason"] = reason
+    if topic_name:
+        topic = db.find_topic_by_name(topic_name, DB_PATH)
+        if topic is None:
+            return f"Topic not found: '{topic_name}'. Check get_curriculum for exact names."
+        updates["topic_id"] = topic.id
+
+    if not updates:
+        return "No fields provided to update."
+
+    updated = db.update_recommendation(id, updates, DB_PATH)
+    if updated is None:
+        return f"Recommendation not found with id {id}. Use get_recommendations to find the correct id."
+
+    return json.dumps(updated.model_dump(), indent=2)
+
+
+@mcp.tool()
 def save_recommendation(
     title: str,
     reason: str,

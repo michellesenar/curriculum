@@ -357,6 +357,53 @@ def save_recommendation(rec: Recommendation, db_path: Path = DB_PATH) -> Recomme
     return rec.model_copy(update={"id": cursor.lastrowid})
 
 
+def update_recommendation(rec_id: int, updates: dict, db_path: Path = DB_PATH) -> Recommendation | None:
+    """
+    Update fields on an existing recommendation. Only keys present in updates are changed.
+    Returns the updated recommendation, or None if not found.
+    """
+    with _get_connection(db_path) as conn:
+        row = conn.execute(
+            "SELECT * FROM recommendations WHERE id = ?", (rec_id,)
+        ).fetchone()
+
+        if row is None:
+            return None
+
+        allowed = {"title", "author", "reason", "topic_id"}
+        fields = {k: v for k, v in updates.items() if k in allowed}
+
+        if not fields:
+            return Recommendation(
+                id=row["id"],
+                title=row["title"],
+                author=row["author"],
+                reason=row["reason"],
+                topic_id=row["topic_id"],
+                source_conversation_id=row["source_conversation_id"],
+                created_at=row["created_at"],
+            )
+
+        set_clause = ", ".join(f"{k} = ?" for k in fields)
+        values = list(fields.values()) + [rec_id]
+        conn.execute(
+            f"UPDATE recommendations SET {set_clause} WHERE id = ?", values
+        )
+        row = conn.execute(
+            "SELECT * FROM recommendations WHERE id = ?", (rec_id,)
+        ).fetchone()
+
+    return Recommendation(
+        id=row["id"],
+        title=row["title"],
+        author=row["author"],
+        reason=row["reason"],
+        topic_id=row["topic_id"],
+        source_conversation_id=row["source_conversation_id"],
+        created_at=row["created_at"],
+    )
+
+
 def search_recommendations(query: str | None = None, db_path: Path = DB_PATH) -> list[Recommendation]:
     """
     Return recommendations matching a keyword search across title, author, and reason.
