@@ -56,6 +56,14 @@ def ingest_conversations(export_path: str) -> str:
     if not CONFIG_PATH.exists():
         return "No filter keywords configured. Run setup_curriculum first to describe your interests."
 
+    keywords = [
+        line.strip()
+        for line in CONFIG_PATH.read_text().splitlines()
+        if line.strip() and not line.strip().startswith("#")
+    ]
+    if not keywords:
+        return "Filter keyword file exists but contains no keywords. Run setup_curriculum to add your interests."
+
     path = Path(export_path)
     if not path.exists():
         return f"File not found: {export_path}"
@@ -224,6 +232,10 @@ def update_topic(
         tags: Replace the current tags with this list.
     """
     db.init_db(DB_PATH)
+
+    valid_types = {"book", "article", "concept", "practice"}
+    if type and type not in valid_types:
+        return f"Invalid type '{type}'. Must be one of: {', '.join(sorted(valid_types))}."
 
     updates = {}
     if new_name:

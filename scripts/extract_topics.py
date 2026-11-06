@@ -95,13 +95,17 @@ def extract_topics(conv: dict, client: anthropic.Anthropic) -> list[Topic]:
         }],
     )
 
+    valid_types = {"book", "article", "concept", "practice"}
+
     for block in response.content:
         if block.type == "tool_use" and block.name == "record_topics":
             topics = []
             for t in block.input.get("topics", []):
+                raw_type = t.get("type", "concept")
+                topic_type = raw_type if raw_type in valid_types else "concept"
                 topics.append(Topic(
                     name=t["name"],
-                    type=t["type"],
+                    type=topic_type,
                     author=t.get("author") or None,
                     description=t.get("description") or None,
                     tags=t.get("tags", []),
