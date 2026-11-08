@@ -86,7 +86,16 @@ def setup_curriculum() -> str:
             "status": "already_set_up" if already else "not_set_up",
             "questions": SETUP_QUESTIONS,
             "instructions": [
-                "Ask the 'anchors' question first and wait for the answer.",
+                *(
+                    [
+                        "This user has already been through setup. Ask whether "
+                        "they want to add more interests. If not, stop here."
+                    ]
+                    if already
+                    else []
+                ),
+                "Ask the 'anchors' question first and wait for the answer. Fewer "
+                "than five is fine. Do not press for more.",
                 "Then ask the 'topics' question, showing the examples so the user "
                 "sees the level of detail that helps. Do not present it as a quiz.",
                 "Call review_interests with the topics list. Ask every follow-up "
@@ -99,7 +108,11 @@ def setup_curriculum() -> str:
                 "For each interest from the second question, call log_topic with "
                 "type 'concept'. If it is really a principle (for example "
                 "'opportunity cost'), use that as the name. Link it to anything "
-                "already logged that shares the idea.",
+                "already logged that shares the idea. Only link when the shared idea "
+                "is real. A specific subject (like a chess opening) can stand alone "
+                "until a genuine connection shows up.",
+                "Before logging a concept, call search_curriculum and reuse an "
+                "existing one if it is the same idea.",
                 "Descriptions describe the subject, never the person: nothing "
                 "about their health, family, work, or circumstances.",
                 "When done, tell the user in a couple of plain sentences what "
@@ -294,9 +307,7 @@ def search_curriculum(query: str) -> str:
     Args:
         query: A keyword or phrase to search for, e.g. 'anthropology' or 'colonial'.
     """
-    if _not_set_up():
-        return NOT_SET_UP
-
+    db.init_db(DB_PATH)
     topics = db.search_topics(query, DB_PATH)
 
     if not topics:
