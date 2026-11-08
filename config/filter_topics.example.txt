@@ -1,15 +1,25 @@
 # One keyword per line. Conversations matching any of these (in title or first message)
 # will be processed during ingest. Everything else is skipped.
 #
-# This is a template. Run setup_curriculum in Claude Desktop to generate your own
-# filter_topics.txt based on your interests. Or copy this file and edit it directly.
+# This is a template for the optional ChatGPT history import. Ask Claude to run
+# set_ingest_keywords to generate your own filter_topics.txt from your interests,
+# or copy this file and edit it directly.
 #
-# Examples — replace with your own:
+# Specific keywords work better than broad ones. "colonialism" is useful;
+# "history" matches almost everything. Replace these examples with your own:
 
-# Reading
-book
-read
-novel
-author
+# Anthropology
+colonialism
+rites of passage
+kinship
 
-# Add your domains below:
+# Decision-making
+game theory
+opportunity cost
+confirmation bias
+
+# Philosophy
+stoicism
+epistemology
+
+# Add your own domains below:

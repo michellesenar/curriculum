@@ -20,10 +20,10 @@ PROJECT_ROOT = Path(__file__).parent.parent
 sys.path.insert(0, str(PROJECT_ROOT / "src"))
 
 from curriculum import db
+from curriculum.paths import DB_PATH
 from curriculum.ingest import _get_message_texts
 from curriculum.models import Topic, TopicMention
 
-DB_PATH = PROJECT_ROOT / "curriculum.db"
 
 EXTRACT_TOOL = {
     "name": "record_topics",

@@ -7,10 +7,13 @@ name = "curriculum"
 version = "0.1.0"
 requires-python = ">=3.13"
 dependencies = [
-    "anthropic>=0.40.0",
     "mcp>=2.3.0",
     "pydantic>=2.14.1",
 ]
+
+[project.optional-dependencies]
+# Only for scripts/extract_topics.py (owner-only ingest harness)
+extract = ["anthropic>=0.40.0"]
 
 [project.scripts]
 curriculum = "curriculum.server:main"

@@ -3,9 +3,9 @@ from typing import Literal
 
 from pydantic import BaseModel, Field
 
-# Restricts the type field to exactly these four strings.
+# Restricts the type field to exactly these strings.
 # Anything else will raise a validation error.
-TopicType = Literal["book", "article", "concept", "practice"]
+TopicType = Literal["book", "article", "media", "concept", "practice"]
 
 
 class Topic(BaseModel):
