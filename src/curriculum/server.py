@@ -546,8 +546,9 @@ def delete_recommendation(id: int) -> str:
     """
     Remove a recommendation from the to-read list, for example once the user has
     read it or no longer wants it. Use get_recommendations to find the id first.
-    If they finished reading it, offer to add it to the graph with log_topic so
-    it is kept as something they have read.
+    If they finished reading it, check with search_curriculum whether it is
+    already in the graph. If not, offer to add it with log_topic and link it to
+    the ideas it develops. Do not offer if it is already there.
 
     Args:
         id: The numeric id of the recommendation to remove.
