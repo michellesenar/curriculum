@@ -411,6 +411,13 @@ def save_recommendation(rec: Recommendation, db_path: Path = DB_PATH) -> Recomme
     return rec.model_copy(update={"id": cursor.lastrowid})
 
 
+def delete_recommendation(rec_id: int, db_path: Path = DB_PATH) -> bool:
+    """Remove a recommendation. Returns True if deleted, False if not found."""
+    with _get_connection(db_path) as conn:
+        cursor = conn.execute("DELETE FROM recommendations WHERE id = ?", (rec_id,))
+    return cursor.rowcount > 0
+
+
 def update_recommendation(rec_id: int, updates: dict, db_path: Path = DB_PATH) -> Recommendation | None:
     """
     Update fields on an existing recommendation. Only keys present in updates are changed.
