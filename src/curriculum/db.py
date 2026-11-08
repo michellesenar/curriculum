@@ -3,8 +3,7 @@ from pathlib import Path
 
 from curriculum.models import Connection, Conversation, Recommendation, Topic, TopicMention
 
-# Walk up from src/curriculum/db.py → src/curriculum → src → project root
-DB_PATH = Path(__file__).parent.parent.parent / "curriculum.db"
+from curriculum.paths import DB_PATH
 
 
 def _get_connection(db_path: Path = DB_PATH) -> sqlite3.Connection:
@@ -16,6 +15,7 @@ def _get_connection(db_path: Path = DB_PATH) -> sqlite3.Connection:
 
 def init_db(db_path: Path = DB_PATH) -> None:
     """Create all tables if they don't exist. Safe to call repeatedly."""
+    db_path.parent.mkdir(parents=True, exist_ok=True)
     with _get_connection(db_path) as conn:
         conn.executescript("""
             CREATE TABLE IF NOT EXISTS conversations (
@@ -150,6 +150,12 @@ def get_all_topics(db_path: Path = DB_PATH) -> list[Topic]:
             "SELECT * FROM topics ORDER BY name"
         ).fetchall()
     return [_row_to_topic(row) for row in rows]
+
+
+def count_topics(db_path: Path = DB_PATH) -> int:
+    """Return how many topics exist. Zero means the curriculum isn't set up yet."""
+    with _get_connection(db_path) as conn:
+        return conn.execute("SELECT COUNT(*) FROM topics").fetchone()[0]
 
 
 def conversation_exists(conversation_id: str, db_path: Path = DB_PATH) -> bool:
