@@ -542,6 +542,25 @@ def update_recommendation(
 
 
 @mcp.tool()
+def delete_recommendation(id: int) -> str:
+    """
+    Remove a recommendation from the to-read list, for example once the user has
+    read it or no longer wants it. Use get_recommendations to find the id first.
+    If they finished reading it, offer to add it to the graph with log_topic so
+    it is kept as something they have read.
+
+    Args:
+        id: The numeric id of the recommendation to remove.
+    """
+    db.init_db(DB_PATH)
+
+    if not db.delete_recommendation(id, DB_PATH):
+        return f"Recommendation not found with id {id}. Use get_recommendations to find the correct id."
+
+    return f"Removed recommendation {id}."
+
+
+@mcp.tool()
 def save_recommendation(
     title: str,
     reason: str,
@@ -577,10 +596,17 @@ def save_recommendation(
         return refusal
 
     topic_id = None
+    warning = None
     if topic_name:
         topic = db.find_topic_by_name(topic_name, DB_PATH)
         if topic:
             topic_id = topic.id
+        else:
+            warning = (
+                f"Saved, but not linked: no topic named '{topic_name}'. Check "
+                "get_curriculum for the exact name, then call update_recommendation "
+                "with topic_name to link it."
+            )
 
     rec = db.save_recommendation(
         Recommendation(
@@ -591,7 +617,10 @@ def save_recommendation(
         ),
         DB_PATH,
     )
-    return json.dumps(rec.model_dump(), indent=2)
+    result = rec.model_dump()
+    if warning:
+        result["warning"] = warning
+    return json.dumps(result, indent=2)
 
 
 @mcp.tool()
