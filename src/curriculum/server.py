@@ -99,7 +99,11 @@ def setup_curriculum() -> str:
                 "Then ask the 'topics' question, showing the examples so the user "
                 "sees the level of detail that helps. Do not present it as a quiz.",
                 "Call review_interests with the topics list. Ask every follow-up "
-                "question it returns and use the answers in place of the broad word.",
+                "question it returns. Also ask the same question yourself for any "
+                "interest that names a whole field or discipline, whatever its "
+                "word count (for example 'cognitive science' or 'software "
+                "engineering'). Use each answer in place of the broad word, and do "
+                "not also save the broad word or field as a topic.",
                 "Save what you learned. For each work from the first question, call "
                 "log_topic (book, article, or media) with a short description of "
                 "the subject. Then log the principle that stuck as a 'concept' "
@@ -115,8 +119,9 @@ def setup_curriculum() -> str:
                 "existing one if it is the same idea.",
                 "Descriptions describe the subject, never the person: nothing "
                 "about their health, family, work, or circumstances.",
-                "When done, tell the user in a couple of plain sentences what "
-                "you saved, and that you'll add to it as they talk.",
+                "When done, list everything you saved, grouped as works and "
+                "ideas, so nothing is hidden. Then say you'll add to it as they "
+                "talk, and ask if they want anything removed or renamed.",
             ],
         },
         indent=2,
@@ -282,6 +287,19 @@ def log_topic(
         return refusal
 
     db.init_db(DB_PATH)
+
+    existing = db.find_topic_by_name(name, DB_PATH)
+    if existing is not None:
+        return json.dumps(
+            {
+                "note": (
+                    f"Already in the graph as '{existing.name}'. Reused it and "
+                    "created nothing new. Use update_topic to change its details."
+                ),
+                "topic": existing.model_dump(),
+            },
+            indent=2,
+        )
 
     from curriculum.models import Topic as TopicModel
     topic = db.save_topic(
