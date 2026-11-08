@@ -7,3 +7,10 @@ dist/
 *.egg-info/
 config/filter_topics.txt
 data/
+
+# Private notes: only README.md is public
+*.md
+!README.md
+
+# Secrets
+.env
