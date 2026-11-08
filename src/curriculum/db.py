@@ -1,3 +1,4 @@
+import re
 import sqlite3
 from pathlib import Path
 
@@ -103,8 +104,14 @@ def save_conversation(conv: Conversation, db_path: Path = DB_PATH) -> None:
 def save_topic(topic: Topic, db_path: Path = DB_PATH) -> Topic:
     """
     Insert a topic. If a topic with the same name already exists, return
-    the existing one. Either way, returns the topic with its database id set.
+    the existing one (names that differ only in case, punctuation, or a
+    leading "the/a/an" count as the same). Either way, returns the topic with
+    its database id set.
     """
+    existing = find_topic_by_name(topic.name, db_path)
+    if existing is not None:
+        return existing
+
     with _get_connection(db_path) as conn:
         conn.execute(
             """
@@ -184,12 +191,37 @@ def search_topics(query: str, db_path: Path = DB_PATH) -> list[Topic]:
     return [_row_to_topic(row) for row in rows]
 
 
+_LEADING_ARTICLE = re.compile(r"^(the|a|an)\s+")
+
+
+def normalize_name(name: str) -> str:
+    """
+    Reduce a topic name to a plain form for comparing: lowercase, apostrophes
+    removed, other punctuation treated as spaces, leading "the/a/an" dropped.
+    "The Malazan Book of the Fallen" and "malazan book of the fallen!" match.
+    """
+    text = name.lower().replace("'", "").replace("\u2019", "")
+    text = re.sub(r"[^\w\s]", " ", text)
+    text = " ".join(text.split())
+    return _LEADING_ARTICLE.sub("", text)
+
+
 def find_topic_by_name(name: str, db_path: Path = DB_PATH) -> Topic | None:
-    """Look up a topic by name. Returns None if not found."""
+    """
+    Look up a topic by name. Tries an exact (case-insensitive) match first,
+    then a match on the normalized name. Returns None if not found.
+    """
     with _get_connection(db_path) as conn:
         row = conn.execute(
             "SELECT * FROM topics WHERE LOWER(name) = LOWER(?)", (name,)
         ).fetchone()
+        if row is None:
+            wanted = normalize_name(name)
+            if wanted:
+                for candidate in conn.execute("SELECT * FROM topics ORDER BY id"):
+                    if normalize_name(candidate["name"]) == wanted:
+                        row = candidate
+                        break
     return _row_to_topic(row) if row else None
 
 

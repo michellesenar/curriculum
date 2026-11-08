@@ -288,6 +288,19 @@ def log_topic(
 
     db.init_db(DB_PATH)
 
+    existing = db.find_topic_by_name(name, DB_PATH)
+    if existing is not None:
+        return json.dumps(
+            {
+                "note": (
+                    f"Already in the graph as '{existing.name}'. Reused it and "
+                    "created nothing new. Use update_topic to change its details."
+                ),
+                "topic": existing.model_dump(),
+            },
+            indent=2,
+        )
+
     from curriculum.models import Topic as TopicModel
     topic = db.save_topic(
         TopicModel(
