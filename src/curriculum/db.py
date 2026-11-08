@@ -221,6 +221,11 @@ def get_threads(db_path: Path = DB_PATH) -> list[list[dict]]:
     ones. Follows edges depth-first until reaching a topic with no further
     connections. Each thread is a list of steps where every step after the
     first includes the reason it was reached from the previous topic.
+
+    Ideas link back to each other, so the graph can contain loops. A thread
+    that returns to a topic it already passed ends there, with that last step
+    marked "loops_back": True. Topics in a loop that no root leads into are
+    started from separately, so they still appear.
     """
     with _get_connection(db_path) as conn:
         rows = conn.execute("""
@@ -253,11 +258,11 @@ def get_threads(db_path: Path = DB_PATH) -> list[list[dict]]:
     roots = [nid for nid in graph if nid not in has_incoming]
 
     threads: list[list[dict]] = []
+    covered: set[int] = set()
 
     def dfs(node_id: int, path: list[dict], visited: set[int]) -> None:
-        if node_id in visited:
-            return
         visited = visited | {node_id}
+        covered.add(node_id)
         edges = graph.get(node_id, [])
         if not edges:
             # Leaf — record the completed path
@@ -271,15 +276,26 @@ def get_threads(db_path: Path = DB_PATH) -> list[list[dict]]:
                 "type":  topic_info[to_id]["type"],
                 "reason": edge["reason"],
             }
+            if to_id in visited:
+                # The thread circles back to a topic already on this path
+                threads.append(path + [{**step, "loops_back": True}])
+                continue
             dfs(to_id, path + [step], visited)
 
-    for root_id in roots:
-        start = {
-            "topic": topic_info[root_id]["name"],
-            "type":  topic_info[root_id]["type"],
+    def start_thread(node_id: int) -> None:
+        dfs(node_id, [{
+            "topic": topic_info[node_id]["name"],
+            "type":  topic_info[node_id]["type"],
             "reason": None,
-        }
-        dfs(root_id, [start], set())
+        }], set())
+
+    for root_id in roots:
+        start_thread(root_id)
+
+    # Anything still unvisited sits in a loop with no root leading into it
+    for node_id in sorted(graph):
+        if node_id not in covered:
+            start_thread(node_id)
 
     return threads
 
