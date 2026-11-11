@@ -1,3 +1,4 @@
+import _isolate  # noqa: F401  (must come first)
 import sqlite3
 import tempfile
 import unittest

@@ -1,4 +1,5 @@
 import json
+from contextvars import ContextVar
 from pathlib import Path
 
 from mcp.server.mcpserver import MCPServer
@@ -22,10 +23,29 @@ NOT_SET_UP = (
 )
 
 
+# Which database this call uses. Unset means the local, single-user database.
+# The hosted entry point sets it for the length of each request, from the
+# tester's private link, so a call can only ever reach that tester's data.
+_tenant_db: ContextVar[Path | None] = ContextVar("tenant_db", default=None)
+
+
+def _db_path() -> Path:
+    """
+    The database for this call, with its tables in place. Local: the fixed
+    DB_PATH with the full schema. Hosted: the tester's database with the
+    trimmed hosted schema (no conversation tables are ever added to it).
+    """
+    tenant = _tenant_db.get()
+    if tenant is None:
+        db.init_db(DB_PATH)
+        return DB_PATH
+    db.init_hosted_db(tenant)
+    return tenant
+
+
 def _not_set_up() -> bool:
     """True when the curriculum has no topics yet."""
-    db.init_db(DB_PATH)
-    return db.count_topics(DB_PATH) == 0
+    return db.count_topics(_db_path()) == 0
 
 
 def _review(field: str, text: str, reviewed: bool) -> str | None:
@@ -230,11 +250,12 @@ def get_curriculum() -> str:
     Return all topics currently in the curriculum knowledge graph: concepts
     (transferable principles), books, articles, media, and practices.
     """
+    db_path = _db_path()
     if _not_set_up():
         return NOT_SET_UP
 
     return json.dumps(
-        [t.model_dump() for t in db.get_all_topics(DB_PATH)],
+        [t.model_dump() for t in db.get_all_topics(db_path)],
         indent=2,
     )
 
@@ -279,6 +300,7 @@ def log_topic(
         reviewed: Set True only if you were told the description was too personal
                   and have confirmed the wording is fine as written.
     """
+    db_path = _db_path()
     if type not in VALID_TYPES:
         return f"Invalid type '{type}'. Must be one of: {', '.join(sorted(VALID_TYPES))}."
 
@@ -286,9 +308,7 @@ def log_topic(
     if refusal:
         return refusal
 
-    db.init_db(DB_PATH)
-
-    existing = db.find_topic_by_name(name, DB_PATH)
+    existing = db.find_topic_by_name(name, db_path)
     if existing is not None:
         return json.dumps(
             {
@@ -310,7 +330,7 @@ def log_topic(
             description=description or None,
             tags=tags or [],
         ),
-        DB_PATH,
+        db_path,
     )
     return json.dumps(topic.model_dump(), indent=2)
 
@@ -325,8 +345,8 @@ def search_curriculum(query: str) -> str:
     Args:
         query: A keyword or phrase to search for, e.g. 'anthropology' or 'colonial'.
     """
-    db.init_db(DB_PATH)
-    topics = db.search_topics(query, DB_PATH)
+    db_path = _db_path()
+    topics = db.search_topics(query, db_path)
 
     if not topics:
         return f"No topics found matching '{query}'."
@@ -359,6 +379,7 @@ def link_topics(
         reviewed: Set True only if you were told the reason was too personal and
                   have confirmed the wording is fine as written.
     """
+    db_path = _db_path()
     if _not_set_up():
         return NOT_SET_UP
 
@@ -366,11 +387,11 @@ def link_topics(
     if refusal:
         return refusal
 
-    source = db.find_topic_by_name(from_topic, DB_PATH)
+    source = db.find_topic_by_name(from_topic, db_path)
     if source is None:
         return f"Topic not found: '{from_topic}'. Check get_curriculum for exact names."
 
-    target = db.find_topic_by_name(to_topic, DB_PATH)
+    target = db.find_topic_by_name(to_topic, db_path)
     if target is None:
         return f"Topic not found: '{to_topic}'. Check get_curriculum for exact names."
 
@@ -383,7 +404,7 @@ def link_topics(
             to_topic_id=target.id,
             reason=reason,
         ),
-        DB_PATH,
+        db_path,
     )
 
     return json.dumps({
@@ -400,10 +421,11 @@ def get_threads() -> str:
     Each thread is a path from a root topic (nothing leads to it) through
     connected topics, with the reason for each connection shown.
     """
+    db_path = _db_path()
     if _not_set_up():
         return NOT_SET_UP
 
-    threads = db.get_threads(DB_PATH)
+    threads = db.get_threads(db_path)
 
     if not threads:
         return "No connections recorded yet. Use link_topics to connect topics."
@@ -437,14 +459,13 @@ def update_topic(
         reviewed: Set True only if you were told the description was too personal
                   and have confirmed the wording is fine as written.
     """
+    db_path = _db_path()
     if type and type not in VALID_TYPES:
         return f"Invalid type '{type}'. Must be one of: {', '.join(sorted(VALID_TYPES))}."
 
     refusal = _review("description", description, reviewed)
     if refusal:
         return refusal
-
-    db.init_db(DB_PATH)
 
     updates = {}
     if new_name:
@@ -461,7 +482,7 @@ def update_topic(
     if not updates:
         return "No fields provided to update."
 
-    updated = db.update_topic(name, updates, DB_PATH)
+    updated = db.update_topic(name, updates, db_path)
     if updated is None:
         return f"Topic not found: '{name}'. Check get_curriculum for exact names."
 
@@ -478,9 +499,8 @@ def delete_topic(name: str) -> str:
     Args:
         name: Exact name of the topic to delete.
     """
-    db.init_db(DB_PATH)
-
-    deleted = db.delete_topic(name, DB_PATH)
+    db_path = _db_path()
+    deleted = db.delete_topic(name, db_path)
     if not deleted:
         return f"Topic not found: '{name}'. Check get_curriculum for exact names."
 
@@ -512,11 +532,10 @@ def update_recommendation(
         reviewed: Set True only if you were told the reason was too personal and
                   have confirmed the wording is fine as written.
     """
+    db_path = _db_path()
     refusal = _review("reason", reason, reviewed)
     if refusal:
         return refusal
-
-    db.init_db(DB_PATH)
 
     updates = {}
     if title:
@@ -526,7 +545,7 @@ def update_recommendation(
     if reason:
         updates["reason"] = reason
     if topic_name:
-        topic = db.find_topic_by_name(topic_name, DB_PATH)
+        topic = db.find_topic_by_name(topic_name, db_path)
         if topic is None:
             return f"Topic not found: '{topic_name}'. Check get_curriculum for exact names."
         updates["topic_id"] = topic.id
@@ -534,7 +553,7 @@ def update_recommendation(
     if not updates:
         return "No fields provided to update."
 
-    updated = db.update_recommendation(id, updates, DB_PATH)
+    updated = db.update_recommendation(id, updates, db_path)
     if updated is None:
         return f"Recommendation not found with id {id}. Use get_recommendations to find the correct id."
 
@@ -553,9 +572,8 @@ def delete_recommendation(id: int) -> str:
     Args:
         id: The numeric id of the recommendation to remove.
     """
-    db.init_db(DB_PATH)
-
-    if not db.delete_recommendation(id, DB_PATH):
+    db_path = _db_path()
+    if not db.delete_recommendation(id, db_path):
         return f"Recommendation not found with id {id}. Use get_recommendations to find the correct id."
 
     return f"Removed recommendation {id}."
@@ -589,6 +607,7 @@ def save_recommendation(
         reviewed: Set True only if you were told the reason was too personal and
                   have confirmed the wording is fine as written.
     """
+    db_path = _db_path()
     if _not_set_up():
         return NOT_SET_UP
 
@@ -599,7 +618,7 @@ def save_recommendation(
     topic_id = None
     warning = None
     if topic_name:
-        topic = db.find_topic_by_name(topic_name, DB_PATH)
+        topic = db.find_topic_by_name(topic_name, db_path)
         if topic:
             topic_id = topic.id
         else:
@@ -616,7 +635,7 @@ def save_recommendation(
             reason=reason,
             topic_id=topic_id,
         ),
-        DB_PATH,
+        db_path,
     )
     result = rec.model_dump()
     if warning:
@@ -634,10 +653,11 @@ def get_recommendations(query: str = "") -> str:
     Args:
         query: Keyword or phrase to search for, e.g. 'liminality' or 'Turner'.
     """
+    db_path = _db_path()
     if _not_set_up():
         return NOT_SET_UP
 
-    recs = db.search_recommendations(query or None, DB_PATH)
+    recs = db.search_recommendations(query or None, db_path)
 
     if not recs:
         msg = "No recommendations found."
