@@ -1,8 +1,8 @@
 # Fly.io config for the hosted curriculum server.
 #
 # Before the first deploy:
-#   1. Replace APP_NAME below (twice) with the app name you chose. The app's
-#      public address will be https://APP_NAME.fly.dev, so pick something plain.
+#   1. The app name below is also in CURRICULUM_ALLOWED_HOSTS and
+#      CURRICULUM_PUBLIC_URL. If you ever rename the app, change all three.
 #   2. Create the volume (retention is set on the command line):
 #        fly volumes create curriculum_data --region lax --size 1 --snapshot-retention 14
 #   3. Check this file:  fly config validate
@@ -13,7 +13,7 @@
 # request is refused with HTTP 421. Tester links are created on the machine with
 #        fly ssh console   then   curriculum-admin create "<label>"
 
-app = "APP_NAME"
+app = "YOUR-APP-NAME"
 primary_region = "lax"
 
 [build]
@@ -24,8 +24,8 @@ primary_region = "lax"
   CURRICULUM_PORT = "8080"
   CURRICULUM_DATA_DIR = "/data"
   CURRICULUM_HOSTED_DIR = "/data/hosted"
-  CURRICULUM_ALLOWED_HOSTS = "APP_NAME.fly.dev"
-  CURRICULUM_PUBLIC_URL = "https://APP_NAME.fly.dev"
+  CURRICULUM_ALLOWED_HOSTS = "YOUR-APP-NAME.fly.dev"
+  CURRICULUM_PUBLIC_URL = "https://YOUR-APP-NAME.fly.dev"
 
 [mounts]
   source = "curriculum_data"
