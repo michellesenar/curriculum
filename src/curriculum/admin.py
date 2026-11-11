@@ -5,6 +5,7 @@ Owner commands for hosted testers. Run these on the server.
     curriculum-admin list                   show active testers (never links)
     curriculum-admin rotate <id>            turn off their links, print a new one
     curriculum-admin remove <id>            delete their database and links
+    curriculum-admin import <id> <file>     merge a saved graph into a tester's account
 
 A link is shown once, when it is made. Only a hash is stored, so a lost link
 can't be looked up, only replaced with `rotate`.
@@ -13,8 +14,9 @@ can't be looked up, only replaced with `rotate`.
 import argparse
 import os
 import sys
+from pathlib import Path
 
-from curriculum import tenants
+from curriculum import importer, tenants
 
 PLACEHOLDER_HOST = "https://YOUR-HOST"
 
@@ -58,6 +60,11 @@ def main(argv: list[str] | None = None) -> int:
     remove.add_argument("tenant_id")
     remove.add_argument("--yes", action="store_true", help="skip the confirmation question")
 
+    imp = sub.add_parser("import", help="merge a saved graph (a hosted-schema .db file) into a tester's account")
+    imp.add_argument("tenant_id")
+    imp.add_argument("file", help="path to the .db file to merge in")
+    imp.add_argument("--dry-run", action="store_true", help="show counts only; write nothing")
+
     args = parser.parse_args(argv)
 
     if args.command == "create":
@@ -98,6 +105,29 @@ def main(argv: list[str] | None = None) -> int:
         tenants.remove_tenant(args.tenant_id)
         print(f"Removed '{tenant['label']}': database deleted, links off.")
         print("Backups still hold a copy until they expire (14 days).")
+        return 0
+
+    if args.command == "import":
+        target = tenants.tenant_db_path(args.tenant_id)
+        if target is None:
+            print(f"No active tester with id {args.tenant_id}.", file=sys.stderr)
+            return 1
+        try:
+            c = importer.import_graph(Path(args.file), target, dry_run=args.dry_run)
+        except importer.ImportFailed as e:
+            print(f"Not imported: {e}", file=sys.stderr)
+            return 1
+        verb = "Would add" if args.dry_run else "Added"
+        print(
+            f"{verb}: {c['topics_new']} topics, {c['connections_new']} connections, "
+            f"{c['recommendations_new']} recommendations."
+        )
+        print(
+            f"Already there or skipped: {c['topics_reused']} topics, "
+            f"{c['connections_skipped']} connections, {c['recommendations_skipped']} recommendations."
+        )
+        if args.dry_run:
+            print("Dry run: nothing was written.")
         return 0
 
     return 2

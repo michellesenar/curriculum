@@ -174,3 +174,15 @@ def list_tenants(root: Path | None = None) -> list[dict]:
             "SELECT id, label, created_at FROM tenants WHERE removed_at IS NULL ORDER BY created_at"
         ).fetchall()
     return [dict(r) for r in rows]
+
+
+def tenant_db_path(tenant_id: str, root: Path | None = None) -> Path | None:
+    """The database path for an active tester id, or None if there's no such active tester."""
+    root = root or hosted_dir()
+    if not (root / "tenants.db").exists():
+        return None
+    with _registry(root) as conn:
+        row = conn.execute(
+            "SELECT 1 FROM tenants WHERE id = ? AND removed_at IS NULL", (tenant_id,)
+        ).fetchone()
+    return _db_path(tenant_id, root) if row else None
