@@ -1,0 +1,10 @@
+# Allow-list: the image gets only what it needs to install and run the server.
+# Everything else (tests, venv, .git, notes, exports, databases, .env) stays out.
+*
+!pyproject.toml
+!src
+!docker
+**/__pycache__
+**/*.pyc
+**/*.db
+**/.env

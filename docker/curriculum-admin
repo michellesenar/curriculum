@@ -1,0 +1,9 @@
+#!/bin/sh
+# Owner commands (create / list / rotate / remove). Typically run through a
+# platform shell, which logs in as root. Run as root, the files they create
+# would be unreadable to the server, so always run them as the app user.
+REAL=/usr/local/libexec/curriculum-admin-real
+if [ "$(id -u)" = "0" ]; then
+    exec setpriv --reuid=10001 --regid=10001 --init-groups "$REAL" "$@"
+fi
+exec "$REAL" "$@"

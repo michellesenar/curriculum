@@ -20,6 +20,13 @@ _PERSON_PATTERNS = [
     r"\bI'll\b",
     r"\bthe user\b",
     r"\buser's\b",
+    # Bare "I" is also a Roman numeral (World War I, Type I error), so only
+    # match it before a verb people use when talking about themselves.
+    (
+        r"\bI\s+(?:am|was|had|have|need|want|feel|felt|think|struggle|struggled|"
+        r"lost|can't|cannot|don't|do|did|will|would|should|keep|used|got|get|"
+        r"like|love|hate)\b"
+    ),
 ]
 
 

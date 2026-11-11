@@ -72,7 +72,76 @@ def init_db(db_path: Path = DB_PATH) -> None:
         """)
 
 
+def init_hosted_db(db_path: Path) -> None:
+    """
+    Create the hosted schema: topics, connections, recommendations only.
+    No conversations, no topic_mentions, and no source_conversation_id columns,
+    so nothing that points back to a chat can be stored. Safe to call repeatedly.
+    """
+    db_path.parent.mkdir(parents=True, exist_ok=True)
+    with _get_connection(db_path) as conn:
+        conn.executescript("""
+            CREATE TABLE IF NOT EXISTS topics (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                name TEXT NOT NULL UNIQUE,
+                type TEXT NOT NULL,
+                author TEXT,
+                description TEXT,
+                tags TEXT,
+                created_at TEXT NOT NULL
+            );
+
+            CREATE TABLE IF NOT EXISTS recommendations (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                title TEXT NOT NULL,
+                author TEXT,
+                reason TEXT NOT NULL,
+                topic_id INTEGER,
+                created_at TEXT NOT NULL,
+                FOREIGN KEY (topic_id) REFERENCES topics(id)
+            );
+
+            CREATE TABLE IF NOT EXISTS connections (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                from_topic_id INTEGER NOT NULL,
+                to_topic_id INTEGER NOT NULL,
+                reason TEXT NOT NULL,
+                created_at TEXT NOT NULL,
+                FOREIGN KEY (from_topic_id) REFERENCES topics(id),
+                FOREIGN KEY (to_topic_id) REFERENCES topics(id)
+            );
+        """)
+
+
+def _has_table(conn: sqlite3.Connection, table: str) -> bool:
+    row = conn.execute(
+        "SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = ?", (table,)
+    ).fetchone()
+    return row is not None
+
+
+def _has_column(conn: sqlite3.Connection, table: str, column: str) -> bool:
+    return any(r["name"] == column for r in conn.execute(f"PRAGMA table_info({table})"))
+
+
+def _source_id(row: sqlite3.Row) -> str | None:
+    """source_conversation_id if this database has that column (hosted ones don't)."""
+    return row["source_conversation_id"] if "source_conversation_id" in row.keys() else None
+
+
 # --- row → model ---------------------------------------------------------
+
+def _row_to_recommendation(row: sqlite3.Row) -> Recommendation:
+    return Recommendation(
+        id=row["id"],
+        title=row["title"],
+        author=row["author"],
+        reason=row["reason"],
+        topic_id=row["topic_id"],
+        source_conversation_id=_source_id(row),
+        created_at=row["created_at"],
+    )
+
 
 def _row_to_topic(row: sqlite3.Row) -> Topic:
     return Topic(
@@ -82,7 +151,7 @@ def _row_to_topic(row: sqlite3.Row) -> Topic:
         author=row["author"],
         description=row["description"],
         tags=row["tags"].split(",") if row["tags"] else [],
-        source_conversation_id=row["source_conversation_id"],
+        source_conversation_id=_source_id(row),
         created_at=row["created_at"],
     )
 
@@ -113,21 +182,20 @@ def save_topic(topic: Topic, db_path: Path = DB_PATH) -> Topic:
         return existing
 
     with _get_connection(db_path) as conn:
+        values = {
+            "name": topic.name,
+            "type": topic.type,
+            "author": topic.author,
+            "description": topic.description,
+            "tags": ",".join(topic.tags) if topic.tags else None,
+            "created_at": topic.created_at,
+        }
+        if _has_column(conn, "topics", "source_conversation_id"):
+            values["source_conversation_id"] = topic.source_conversation_id
         conn.execute(
-            """
-            INSERT OR IGNORE INTO topics
-                (name, type, author, description, tags, source_conversation_id, created_at)
-            VALUES (?, ?, ?, ?, ?, ?, ?)
-            """,
-            (
-                topic.name,
-                topic.type,
-                topic.author,
-                topic.description,
-                ",".join(topic.tags) if topic.tags else None,
-                topic.source_conversation_id,
-                topic.created_at,
-            ),
+            f"INSERT OR IGNORE INTO topics ({', '.join(values)}) "
+            f"VALUES ({', '.join('?' * len(values))})",
+            list(values.values()),
         )
         row = conn.execute(
             "SELECT * FROM topics WHERE name = ?", (topic.name,)
@@ -228,19 +296,18 @@ def find_topic_by_name(name: str, db_path: Path = DB_PATH) -> Topic | None:
 def save_connection(connection: Connection, db_path: Path = DB_PATH) -> Connection:
     """Insert a directed connection between two topics."""
     with _get_connection(db_path) as conn:
+        values = {
+            "from_topic_id": connection.from_topic_id,
+            "to_topic_id": connection.to_topic_id,
+            "reason": connection.reason,
+            "created_at": connection.created_at,
+        }
+        if _has_column(conn, "connections", "source_conversation_id"):
+            values["source_conversation_id"] = connection.source_conversation_id
         cursor = conn.execute(
-            """
-            INSERT INTO connections
-                (from_topic_id, to_topic_id, reason, source_conversation_id, created_at)
-            VALUES (?, ?, ?, ?, ?)
-            """,
-            (
-                connection.from_topic_id,
-                connection.to_topic_id,
-                connection.reason,
-                connection.source_conversation_id,
-                connection.created_at,
-            ),
+            f"INSERT INTO connections ({', '.join(values)}) "
+            f"VALUES ({', '.join('?' * len(values))})",
+            list(values.values()),
         )
         return connection.model_copy(update={"id": cursor.lastrowid})
 
@@ -378,9 +445,10 @@ def delete_topic(name: str, db_path: Path = DB_PATH) -> bool:
             "DELETE FROM connections WHERE from_topic_id = ? OR to_topic_id = ?",
             (topic.id, topic.id),
         )
-        conn.execute(
-            "DELETE FROM topic_mentions WHERE topic_id = ?", (topic.id,)
-        )
+        if _has_table(conn, "topic_mentions"):
+            conn.execute(
+                "DELETE FROM topic_mentions WHERE topic_id = ?", (topic.id,)
+            )
         conn.execute(
             "UPDATE recommendations SET topic_id = NULL WHERE topic_id = ?",
             (topic.id,),
@@ -393,20 +461,19 @@ def delete_topic(name: str, db_path: Path = DB_PATH) -> bool:
 def save_recommendation(rec: Recommendation, db_path: Path = DB_PATH) -> Recommendation:
     """Insert a recommendation and return it with its database id set."""
     with _get_connection(db_path) as conn:
+        values = {
+            "title": rec.title,
+            "author": rec.author,
+            "reason": rec.reason,
+            "topic_id": rec.topic_id,
+            "created_at": rec.created_at,
+        }
+        if _has_column(conn, "recommendations", "source_conversation_id"):
+            values["source_conversation_id"] = rec.source_conversation_id
         cursor = conn.execute(
-            """
-            INSERT INTO recommendations
-                (title, author, reason, topic_id, source_conversation_id, created_at)
-            VALUES (?, ?, ?, ?, ?, ?)
-            """,
-            (
-                rec.title,
-                rec.author,
-                rec.reason,
-                rec.topic_id,
-                rec.source_conversation_id,
-                rec.created_at,
-            ),
+            f"INSERT INTO recommendations ({', '.join(values)}) "
+            f"VALUES ({', '.join('?' * len(values))})",
+            list(values.values()),
         )
     return rec.model_copy(update={"id": cursor.lastrowid})
 
@@ -435,15 +502,7 @@ def update_recommendation(rec_id: int, updates: dict, db_path: Path = DB_PATH) -
         fields = {k: v for k, v in updates.items() if k in allowed}
 
         if not fields:
-            return Recommendation(
-                id=row["id"],
-                title=row["title"],
-                author=row["author"],
-                reason=row["reason"],
-                topic_id=row["topic_id"],
-                source_conversation_id=row["source_conversation_id"],
-                created_at=row["created_at"],
-            )
+            return _row_to_recommendation(row)
 
         set_clause = ", ".join(f"{k} = ?" for k in fields)
         values = list(fields.values()) + [rec_id]
@@ -454,15 +513,7 @@ def update_recommendation(rec_id: int, updates: dict, db_path: Path = DB_PATH) -
             "SELECT * FROM recommendations WHERE id = ?", (rec_id,)
         ).fetchone()
 
-    return Recommendation(
-        id=row["id"],
-        title=row["title"],
-        author=row["author"],
-        reason=row["reason"],
-        topic_id=row["topic_id"],
-        source_conversation_id=row["source_conversation_id"],
-        created_at=row["created_at"],
-    )
+    return _row_to_recommendation(row)
 
 
 def write_filter_keywords(keywords: list[str], config_path: Path) -> list[str]:
@@ -516,14 +567,6 @@ def search_recommendations(query: str | None = None, db_path: Path = DB_PATH) ->
             ).fetchall()
 
     return [
-        Recommendation(
-            id=row["id"],
-            title=row["title"],
-            author=row["author"],
-            reason=row["reason"],
-            topic_id=row["topic_id"],
-            source_conversation_id=row["source_conversation_id"],
-            created_at=row["created_at"],
-        )
+        _row_to_recommendation(row)
         for row in rows
     ]
