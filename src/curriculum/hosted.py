@@ -12,11 +12,13 @@ is nothing that could carry one tester's database into another tester's request.
 
 import os
 import re
+from datetime import datetime, timezone
 
 from mcp.server.mcpserver import MCPServer
 from mcp.server.transport_security import TransportSecuritySettings
 
-from curriculum import server, tenants
+from curriculum import db, server, tenants
+from curriculum.export import export_csv
 
 # An explicit list, not "everything except". Owner-only tools that read files or
 # write config on the machine (set_ingest_keywords, ingest_conversations) are
@@ -68,6 +70,10 @@ class TokenRouter:
             await _not_found(send)
             return
 
+        if match.group(2) == "/export.csv":
+            await _export(scope, send, db_path)
+            return
+
         scope = {**scope, "path": match.group(2)}
         scope["raw_path"] = scope["path"].encode()
         reset = server._tenant_db.set(db_path)
@@ -77,13 +83,34 @@ class TokenRouter:
             server._tenant_db.reset(reset)
 
 
+async def _export(scope, send, db_path) -> None:
+    """GET <link>/export.csv: everything stored for this tester, as one CSV download."""
+    if scope["method"] != "GET":
+        await _respond(send, 405, b"Method not allowed", [(b"allow", b"GET")])
+        return
+    db.init_hosted_db(db_path)
+    body = export_csv(db_path)
+    filename = f"curriculum-export-{datetime.now(timezone.utc):%Y-%m-%d}.csv"
+    await _respond(send, 200, body, [
+        (b"content-type", b"text/csv; charset=utf-8"),
+        (b"content-disposition", f'attachment; filename="{filename}"'.encode()),
+        (b"cache-control", b"no-store"),
+        (b"referrer-policy", b"no-referrer"),
+        (b"x-content-type-options", b"nosniff"),
+    ])
+
+
+async def _respond(send, status: int, body: bytes, headers=()) -> None:
+    headers = list(headers)
+    if not any(k == b"content-type" for k, _ in headers):
+        headers.append((b"content-type", b"text/plain; charset=utf-8"))
+    headers.append((b"content-length", str(len(body)).encode()))
+    await send({"type": "http.response.start", "status": status, "headers": headers})
+    await send({"type": "http.response.body", "body": body})
+
+
 async def _not_found(send) -> None:
-    await send({
-        "type": "http.response.start",
-        "status": 404,
-        "headers": [(b"content-type", b"text/plain; charset=utf-8")],
-    })
-    await send({"type": "http.response.body", "body": b"Not found"})
+    await _respond(send, 404, b"Not found")
 
 
 def _security() -> TransportSecuritySettings | None:

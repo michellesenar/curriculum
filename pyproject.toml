@@ -18,6 +18,7 @@ extract = ["anthropic>=0.40.0"]
 [project.scripts]
 curriculum = "curriculum.server:main"
 curriculum-hosted = "curriculum.hosted:main"
+curriculum-admin = "curriculum.admin:main"
 
 [tool.hatch.build.targets.wheel]
 packages = ["src/curriculum"]
