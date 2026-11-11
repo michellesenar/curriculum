@@ -67,6 +67,20 @@ def _review(field: str, text: str, reviewed: bool) -> str | None:
     )
 
 
+def _review_all(fields: dict[str, str], reviewed: bool) -> str | None:
+    """Run _review over several fields in order; return the first refusal, if any."""
+    for field, text in fields.items():
+        refusal = _review(field, text, reviewed)
+        if refusal:
+            return refusal
+    return None
+
+
+# Types whose name is an idea or activity we phrase ourselves. The title of a
+# book, article or film is someone else's wording, so it is not checked.
+PRINCIPLE_TYPES = {"concept", "practice"}
+
+
 # --- setup ---------------------------------------------------------------
 
 SETUP_QUESTIONS = [
@@ -137,8 +151,9 @@ def setup_curriculum() -> str:
                 "until a genuine connection shows up.",
                 "Before logging a concept, call search_curriculum and reuse an "
                 "existing one if it is the same idea.",
-                "Descriptions describe the subject, never the person: nothing "
-                "about their health, family, work, or circumstances.",
+                "Descriptions, tags, and concept names describe the subject, never "
+                "the person: nothing about their health, family, work, or "
+                "circumstances.",
                 "When done, list everything you saved, grouped as works and "
                 "ideas, so nothing is hidden. Then say you'll add to it as they "
                 "talk, and ask if they want anything removed or renamed.",
@@ -289,7 +304,16 @@ def log_topic(
     The description is one or two sentences about the subject matter and why it
     belongs in the graph. Describe the subject, not the person: nothing about
     their health, family, work, or circumstances, and no 'I', 'my', or 'the user'.
-    If you are unsure whether something is too personal, check with the user first.
+    The same goes for the name of a concept and for tags: they name ideas and
+    subject areas, never the person's situation ('loss aversion', not 'my
+    gambling problem').
+
+    Some subjects are private in themselves: health conditions, money trouble,
+    relationships, legal matters, addiction. If the user has not clearly asked
+    to keep one in their graph, ask first, and save it only if they say yes. Do
+    not ask about ordinary topics that merely touch these areas. If the user
+    says not to save something, or to forget it, do not save it; if it is
+    already saved, offer to remove it with delete_topic.
 
     Args:
         name: The principle, or the title of the work or practice.
@@ -297,14 +321,22 @@ def log_topic(
         author: Author or creator, for works.
         description: What the topic is about, in terms of the subject only.
         tags: Subject areas it touches, e.g. ['golf', 'poker', 'investing'].
-        reviewed: Set True only if you were told the description was too personal
-                  and have confirmed the wording is fine as written.
+              Subject areas only, never anything about the person.
+        reviewed: Set True only if you were told a field was too personal and
+                  have confirmed the wording is fine as written.
     """
     db_path = _db_path()
     if type not in VALID_TYPES:
         return f"Invalid type '{type}'. Must be one of: {', '.join(sorted(VALID_TYPES))}."
 
-    refusal = _review("description", description, reviewed)
+    refusal = _review_all(
+        {
+            "description": description,
+            "tags": ", ".join(tags or []),
+            "name": name if type in PRINCIPLE_TYPES else "",
+        },
+        reviewed,
+    )
     if refusal:
         return refusal
 
@@ -446,8 +478,8 @@ def update_topic(
     """
     Update fields on an existing topic. Only fields you provide are changed —
     leave everything else empty to keep current values. The same rules as
-    log_topic apply: concepts are named as principles, and descriptions
-    describe the subject, not the person.
+    log_topic apply: concepts are named as principles, and descriptions, tags,
+    and concept names describe the subject, not the person.
 
     Args:
         name: Current exact name of the topic to update.
@@ -455,15 +487,24 @@ def update_topic(
         type: Correct the type — 'book', 'article', 'media', 'concept', or 'practice'.
         author: Set or correct the author name.
         description: Set or update the description.
-        tags: Replace the current tags with this list.
-        reviewed: Set True only if you were told the description was too personal
-                  and have confirmed the wording is fine as written.
+        tags: Replace the current tags with this list. Subject areas only.
+        reviewed: Set True only if you were told a field was too personal and
+                  have confirmed the wording is fine as written.
     """
     db_path = _db_path()
     if type and type not in VALID_TYPES:
         return f"Invalid type '{type}'. Must be one of: {', '.join(sorted(VALID_TYPES))}."
 
-    refusal = _review("description", description, reviewed)
+    current = db.find_topic_by_name(name, db_path)
+    effective_type = type or (current.type if current else "")
+    refusal = _review_all(
+        {
+            "description": description,
+            "tags": ", ".join(tags or []),
+            "name": new_name if effective_type in PRINCIPLE_TYPES else "",
+        },
+        reviewed,
+    )
     if refusal:
         return refusal
 
@@ -493,7 +534,8 @@ def update_topic(
 def delete_topic(name: str) -> str:
     """
     Remove a topic from the curriculum along with all its connections and mentions.
-    Use this to clean up extraction errors or topics that don't belong in the graph.
+    Use this to clean up extraction errors or topics that don't belong in the graph,
+    and whenever the user asks you to forget or remove something.
     Recommendations linked to this topic are preserved but unlinked.
 
     Args:
@@ -564,7 +606,8 @@ def update_recommendation(
 def delete_recommendation(id: int) -> str:
     """
     Remove a recommendation from the to-read list, for example once the user has
-    read it or no longer wants it. Use get_recommendations to find the id first.
+    read it, no longer wants it, or asks you to forget it. Use get_recommendations
+    to find the id first.
     If they finished reading it, check with search_curriculum whether it is
     already in the graph. If not, offer to add it with log_topic and link it to
     the ideas it develops. Do not offer if it is already there.
@@ -596,6 +639,12 @@ def save_recommendation(
     it is findable later. Do not explain why the person needs it, and do not
     include anything about their health, family, work, or circumstances. If you
     are unsure whether something is too personal, leave it out.
+
+    If the book is mainly about something private (a health condition, money
+    trouble, a relationship, a legal matter, addiction) and the user has not
+    clearly asked you to keep it, ask before saving. If the user says not to save
+    something, or to forget it, do not save it; if it is already saved, offer to
+    remove it with delete_recommendation.
 
     Args:
         title: Title of the recommended book or article.
