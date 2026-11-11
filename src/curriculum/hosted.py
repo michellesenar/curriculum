@@ -64,6 +64,15 @@ class TokenRouter:
             await self.app(scope, receive, send)
             return
 
+        # Platform health check: no token, no tenant data, nothing logged.
+        # Only GET and HEAD on this exact path; everything else is routed as before.
+        if scope["path"] == "/healthz" and scope["method"] in ("GET", "HEAD"):
+            await _respond(
+                send, 200, b"" if scope["method"] == "HEAD" else b"ok\n",
+                [(b"cache-control", b"no-store")],
+            )
+            return
+
         match = _PATH.match(scope["path"])
         db_path = tenants.resolve(match.group(1), self.root) if match else None
         if db_path is None:

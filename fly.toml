@@ -1,0 +1,53 @@
+# Fly.io config for the hosted curriculum server.
+#
+# Before the first deploy:
+#   1. Replace APP_NAME below (twice) with the app name you chose. The app's
+#      public address will be https://APP_NAME.fly.dev, so pick something plain.
+#   2. Create the volume (retention is set on the command line):
+#        fly volumes create curriculum_data --region lax --size 1 --snapshot-retention 14
+#   3. Check this file:  fly config validate
+#   4. Deploy ONE machine only (SQLite files live on a single volume):
+#        fly deploy --ha=false
+#
+# The server needs CURRICULUM_ALLOWED_HOSTS to match the public address or every
+# request is refused with HTTP 421. Tester links are created on the machine with
+#        fly ssh console   then   curriculum-admin create "<label>"
+
+app = "APP_NAME"
+primary_region = "lax"
+
+[build]
+  dockerfile = "Dockerfile"
+
+[env]
+  CURRICULUM_HOST = "0.0.0.0"
+  CURRICULUM_PORT = "8080"
+  CURRICULUM_DATA_DIR = "/data"
+  CURRICULUM_HOSTED_DIR = "/data/hosted"
+  CURRICULUM_ALLOWED_HOSTS = "APP_NAME.fly.dev"
+  CURRICULUM_PUBLIC_URL = "https://APP_NAME.fly.dev"
+
+[mounts]
+  source = "curriculum_data"
+  destination = "/data"
+
+[http_service]
+  internal_port = 8080
+  force_https = true
+  # Always on: a tester's chat can arrive at any hour, and a stopped machine
+  # would make the first request slow or fail.
+  auto_stop_machines = "off"
+  auto_start_machines = true
+  min_machines_running = 1
+
+  [[http_service.checks]]
+    grace_period = "10s"
+    interval = "30s"
+    timeout = "5s"
+    method = "GET"
+    path = "/healthz"
+
+[[vm]]
+  cpu_kind = "shared"
+  cpus = 1
+  memory = "512mb"
