@@ -78,7 +78,13 @@ def get_passed_conversation_ids(db_path: Path) -> set[str]:
     return {row[0] for row in rows}
 
 
-def extract_topics(conv: dict, client: anthropic.Anthropic) -> list[Topic]:
+MAX_CHARS = 15000
+
+
+def extract_topics(
+    conv: dict, client: anthropic.Anthropic
+) -> tuple[list[Topic], dict]:
+    """Return (topics, diagnostics). Diagnostics explain an empty or odd result."""
     conv_id = conv.get("conversation_id", "")
     messages = _get_message_texts(conv)
     full_text = "\n\n".join(f"{role.upper()}: {text}" for role, text in messages)
@@ -91,14 +97,26 @@ def extract_topics(conv: dict, client: anthropic.Anthropic) -> list[Topic]:
         tool_choice={"type": "tool", "name": "record_topics"},
         messages=[{
             "role": "user",
-            "content": f"Extract intellectual topics from this conversation:\n\n{full_text[:15000]}",
+            "content": f"Extract intellectual topics from this conversation:\n\n{full_text[:MAX_CHARS]}",
         }],
     )
+
+    diag = {
+        "chars_total": len(full_text),
+        "chars_sent": min(len(full_text), MAX_CHARS),
+        "stop_reason": response.stop_reason,
+        "input_tokens": response.usage.input_tokens,
+        "output_tokens": response.usage.output_tokens,
+        "tool_use_found": False,
+        "raw_tool_input": None,
+    }
 
     valid_types = {"book", "article", "concept", "practice"}
 
     for block in response.content:
         if block.type == "tool_use" and block.name == "record_topics":
+            diag["tool_use_found"] = True
+            diag["raw_tool_input"] = block.input
             topics = []
             for t in block.input.get("topics", []):
                 raw_type = t.get("type", "concept")
@@ -111,9 +129,20 @@ def extract_topics(conv: dict, client: anthropic.Anthropic) -> list[Topic]:
                     tags=t.get("tags", []),
                     source_conversation_id=conv_id,
                 ))
-            return topics
+            return topics, diag
 
-    return []
+    return [], diag
+
+
+def format_diag(diag: dict) -> str:
+    cut = diag["chars_total"] - diag["chars_sent"]
+    trunc = f", truncated {cut} chars" if cut else ""
+    flag = "" if diag["tool_use_found"] else ", NO tool_use block"
+    return (
+        f"sent {diag['chars_sent']}/{diag['chars_total']} chars{trunc}; "
+        f"tokens in={diag['input_tokens']} out={diag['output_tokens']}; "
+        f"stop={diag['stop_reason']}{flag}"
+    )
 
 
 def main() -> None:
@@ -145,7 +174,7 @@ def main() -> None:
         conv_id = raw.get("conversation_id", "")
         title = raw.get("title", "Untitled")
 
-        topics = extract_topics(raw, client)
+        topics, diag = extract_topics(raw, client)
         total_topics += len(topics)
 
         for topic in topics:
@@ -156,6 +185,10 @@ def main() -> None:
             )
 
         print(f"[{i}/{len(to_process)}] {title[:60]} → {len(topics)} topics")
+        print(f"    {format_diag(diag)}")
+        if not topics:
+            # Empty result: show exactly what the model returned.
+            print(f"    EMPTY. raw tool input: {json.dumps(diag['raw_tool_input'])}")
 
     print(f"\nDone. {total_topics} topics extracted from {len(to_process)} conversations.")
 
