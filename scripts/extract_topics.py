@@ -63,11 +63,15 @@ Focus on:
 - Books and articles (with author if mentioned)
 - Academic or intellectual concepts explored in depth
 - Practices or disciplines discussed
+- Design principles, engineering and organizational lessons, and decision
+  frameworks, stated as general ideas that outlive the specific project
+  (for example an architectural rule of thumb, or a way of deciding what to build)
 
 Skip:
-- Technical debugging, error messages, code snippets
+- Stack traces, error messages, library- or tool-specific debugging, code snippets
 - Casual or logistical chit-chat
 - Formatting or writing help with no intellectual content
+- Venting or emotional processing, unless it states a general idea
 
 Only extract things that belong in a personal intellectual curriculum.
 
@@ -76,6 +80,8 @@ Naming rules:
   Never use a sentence from the conversation as a name, and never use the
   conversation's own title as a topic.
 - Name concepts after the idea itself, in a short noun phrase.
+- Never put the name of a person, employer, client, team or internal project
+  in a topic name or description. State the general idea instead.
 - Do not record personal circumstances, health, family situations or the
   user's feelings as topics.
 - This is a long transcript: cover the whole conversation, including ideas
@@ -91,19 +97,44 @@ def get_passed_conversation_ids(db_path: Path) -> set[str]:
     return {row[0] for row in rows}
 
 
-MAX_CHARS = 15000  # default cap; --match mode sends the whole conversation
+MAX_CHARS = 15000  # default cap; --match / --conversation-id send the whole conversation
 MAX_OUTPUT_TOKENS = 4096
-MAX_FULL_CHARS = 450_000  # ~110k tokens; refuse rather than silently truncate
+CHUNK_CHARS = 250_000  # ~60-90k tokens per call; longer conversations are split
 
 
-def extract_topics(
-    conv: dict, client: anthropic.Anthropic, max_chars: int | None = MAX_CHARS
+def _format_messages(messages: list[tuple[str, str]]) -> list[str]:
+    return [f"{role.upper()}: {text}" for role, text in messages]
+
+
+def split_chunks(blocks: list[str], limit: int) -> list[str]:
+    """Group message blocks into chunks of at most `limit` chars, splitting on message
+    boundaries. A single message longer than `limit` is split by characters."""
+    chunks: list[str] = []
+    cur: list[str] = []
+    size = 0
+    for block in blocks:
+        pieces = [block[i:i + limit] for i in range(0, len(block), limit)] or [block]
+        for piece in pieces:
+            if cur and size + len(piece) + 2 > limit:
+                chunks.append("\n\n".join(cur))
+                cur, size = [], 0
+            cur.append(piece)
+            size += len(piece) + 2
+    if cur:
+        chunks.append("\n\n".join(cur))
+    return chunks
+
+
+def _call_model(
+    text: str, client: anthropic.Anthropic, conv_id: str, known: list[str], part: str
 ) -> tuple[list[Topic], dict]:
-    """Return (topics, diagnostics). Diagnostics explain an empty or odd result."""
-    conv_id = conv.get("conversation_id", "")
-    messages = _get_message_texts(conv)
-    full_text = "\n\n".join(f"{role.upper()}: {text}" for role, text in messages)
-
+    note = ""
+    if known:
+        note = (
+            "\n\nTopics already recorded from earlier parts of this same conversation "
+            "(do not record these again, even under a different name):\n- "
+            + "\n- ".join(known)
+        )
     response = client.messages.create(
         model="claude-haiku-4-5",
         max_tokens=MAX_OUTPUT_TOKENS,
@@ -112,41 +143,74 @@ def extract_topics(
         tool_choice={"type": "tool", "name": "record_topics"},
         messages=[{
             "role": "user",
-            "content": f"Extract intellectual topics from this conversation:\n\n{(full_text if max_chars is None else full_text[:max_chars])}",
+            "content": f"Extract intellectual topics from this conversation{part}:{note}\n\n{text}",
         }],
     )
-
-    diag = {
-        "chars_total": len(full_text),
-        "chars_sent": len(full_text) if max_chars is None else min(len(full_text), max_chars),
+    d = {
+        "chars_sent": len(text),
         "stop_reason": response.stop_reason,
         "input_tokens": response.usage.input_tokens,
         "output_tokens": response.usage.output_tokens,
         "tool_use_found": False,
         "raw_tool_input": None,
     }
-
     valid_types = {"book", "article", "concept", "practice"}
-
     for block in response.content:
         if block.type == "tool_use" and block.name == "record_topics":
-            diag["tool_use_found"] = True
-            diag["raw_tool_input"] = block.input
+            d["tool_use_found"] = True
+            d["raw_tool_input"] = block.input
             topics = []
             for t in block.input.get("topics", []):
                 raw_type = t.get("type", "concept")
-                topic_type = raw_type if raw_type in valid_types else "concept"
                 topics.append(Topic(
                     name=t["name"],
-                    type=topic_type,
+                    type=raw_type if raw_type in valid_types else "concept",
                     author=t.get("author") or None,
                     description=t.get("description") or None,
                     tags=t.get("tags", []),
                     source_conversation_id=conv_id,
                 ))
-            return topics, diag
+            return topics, d
+    return [], d
 
-    return [], diag
+
+def extract_topics(
+    conv: dict, client: anthropic.Anthropic, max_chars: int | None = MAX_CHARS
+) -> tuple[list[Topic], dict]:
+    """Return (topics, diagnostics). Diagnostics explain an empty or odd result.
+
+    With max_chars=None the whole conversation is used; if it is longer than
+    CHUNK_CHARS it is split into chunks and the topics are merged by name."""
+    conv_id = conv.get("conversation_id", "")
+    blocks = _format_messages(_get_message_texts(conv))
+    full_text = "\n\n".join(blocks)
+
+    if max_chars is not None:
+        chunks = [full_text[:max_chars]]
+    else:
+        chunks = split_chunks(blocks, CHUNK_CHARS)
+
+    merged: dict[str, Topic] = {}
+    parts: list[dict] = []
+    for n, chunk in enumerate(chunks, 1):
+        part = f" (part {n} of {len(chunks)})" if len(chunks) > 1 else ""
+        topics, d = _call_model(chunk, client, conv_id, [t.name for t in merged.values()], part)
+        parts.append(d)
+        for t in topics:
+            merged.setdefault(db.normalize_name(t.name), t)
+
+    diag = {
+        "chars_total": len(full_text),
+        "chars_sent": sum(d["chars_sent"] for d in parts),
+        "chunks": len(chunks),
+        "stop_reason": "max_tokens" if any(d["stop_reason"] == "max_tokens" for d in parts)
+        else parts[-1]["stop_reason"],
+        "input_tokens": sum(d["input_tokens"] for d in parts),
+        "output_tokens": sum(d["output_tokens"] for d in parts),
+        "tool_use_found": all(d["tool_use_found"] for d in parts),
+        "raw_tool_input": [d["raw_tool_input"] for d in parts] if len(parts) > 1 else parts[0]["raw_tool_input"],
+    }
+    return list(merged.values()), diag
 
 
 def matches_keyword(conv: dict, keyword: str) -> bool:
@@ -174,10 +238,11 @@ def ensure_conversation_row(conv: dict, db_path: Path) -> None:
 
 def format_diag(diag: dict) -> str:
     cut = diag["chars_total"] - diag["chars_sent"]
-    trunc = f", truncated {cut} chars" if cut else ""
+    trunc = f", truncated {cut} chars" if cut > 0 and diag.get("chunks", 1) == 1 else ""
     flag = "" if diag["tool_use_found"] else ", NO tool_use block"
+    chunks = f" in {diag['chunks']} chunks" if diag.get("chunks", 1) > 1 else ""
     return (
-        f"sent {diag['chars_sent']}/{diag['chars_total']} chars{trunc}; "
+        f"sent {diag['chars_sent']}/{diag['chars_total']} chars{chunks}{trunc}; "
         f"tokens in={diag['input_tokens']} out={diag['output_tokens']}; "
         f"stop={diag['stop_reason']}{flag}"
     )
@@ -188,8 +253,11 @@ def main() -> None:
     parser.add_argument("export_path", type=Path, help="path to conversations.json")
     parser.add_argument(
         "--conversation-id",
-        help="run on this one conversation only. Dry run: prints the topics "
-        "and diagnostics, and does not touch the database (add --save to store them)",
+        action="append",
+        metavar="ID",
+        help="run on this conversation only (repeat the flag for several), on the full "
+        "text. Dry run: prints the topics and diagnostics, and does not touch the "
+        "database (add --save to store them)",
     )
     parser.add_argument(
         "--save",
@@ -200,7 +268,8 @@ def main() -> None:
         "--match",
         metavar="WORD",
         help="run on every conversation with WORD in its title or first 500 words, "
-        "on the full text (no truncation), whether or not it passed the ingest "
+        "on the full text (no truncation; very long ones are sent in chunks), "
+        "whether or not it passed the ingest "
         "filter or already has topics. Saves to the database unless --dry-run",
     )
     parser.add_argument(
@@ -223,30 +292,23 @@ def main() -> None:
     with open(args.export_path) as f:
         conversations = json.load(f)
 
-    single = args.conversation_id is not None
+    single = bool(args.conversation_id)
     matching = args.match is not None
     full_text_mode = single or matching
     write_db = (not single and not args.dry_run) or args.save
-    max_chars = None if matching else MAX_CHARS
+    max_chars = None if full_text_mode else MAX_CHARS
 
     if single:
-        to_process = [
-            c for c in conversations if c.get("conversation_id") == args.conversation_id
-        ]
-        if not to_process:
-            print(f"No conversation with id {args.conversation_id} in {args.export_path}")
+        wanted = set(args.conversation_id)
+        to_process = [c for c in conversations if c.get("conversation_id") in wanted]
+        missing = wanted - {c.get("conversation_id") for c in to_process}
+        if missing:
+            print(f"No conversation with id {sorted(missing)} in {args.export_path}")
             sys.exit(1)
     elif matching:
         to_process = [c for c in conversations if matches_keyword(c, args.match)]
         if not to_process:
             print(f"No conversation matches {args.match!r} in {args.export_path}")
-            sys.exit(1)
-        too_big = [
-            c.get("title") for c in to_process
-            if sum(len(t) for _, t in _get_message_texts(c)) > MAX_FULL_CHARS
-        ]
-        if too_big:
-            print(f"Too long to send whole (over {MAX_FULL_CHARS} chars), refusing to truncate: {too_big}")
             sys.exit(1)
     else:
         db.init_db(DB_PATH)
