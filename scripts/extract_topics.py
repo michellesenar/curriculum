@@ -7,8 +7,10 @@ conversation. Only processes conversations already ingested with passed_filter=1
 Requires ANTHROPIC_API_KEY in the environment.
 
 Usage: python scripts/extract_topics.py path/to/conversations.json
+       python scripts/extract_topics.py path/to/conversations.json --conversation-id ID [--save]
 """
 
+import argparse
 import json
 import sqlite3
 import sys
@@ -146,27 +148,53 @@ def format_diag(diag: dict) -> str:
 
 
 def main() -> None:
-    if len(sys.argv) < 2:
-        print("Usage: python scripts/extract_topics.py path/to/conversations.json")
+    parser = argparse.ArgumentParser(description=__doc__.strip().splitlines()[0])
+    parser.add_argument("export_path", type=Path, help="path to conversations.json")
+    parser.add_argument(
+        "--conversation-id",
+        help="run on this one conversation only. Dry run: prints the topics "
+        "and diagnostics, and does not touch the database (add --save to store them)",
+    )
+    parser.add_argument(
+        "--save",
+        action="store_true",
+        help="with --conversation-id, also save the topics to the database",
+    )
+    args = parser.parse_args()
+
+    if args.save and not args.conversation_id:
+        parser.error("--save only applies with --conversation-id")
+    if not args.export_path.exists():
+        print(f"File not found: {args.export_path}")
         sys.exit(1)
 
-    export_path = Path(sys.argv[1])
-    if not export_path.exists():
-        print(f"File not found: {export_path}")
-        sys.exit(1)
-
-    client = anthropic.Anthropic()
-    db.init_db(DB_PATH)
-
-    with open(export_path) as f:
+    with open(args.export_path) as f:
         conversations = json.load(f)
 
-    passed_ids = get_passed_conversation_ids(DB_PATH)
-    if not passed_ids:
-        print("No ingested conversations found. Run ingest_conversations first.")
-        sys.exit(1)
+    single = args.conversation_id is not None
+    write_db = not single or args.save
 
-    to_process = [c for c in conversations if c.get("conversation_id") in passed_ids]
+    if single:
+        to_process = [
+            c for c in conversations if c.get("conversation_id") == args.conversation_id
+        ]
+        if not to_process:
+            print(f"No conversation with id {args.conversation_id} in {args.export_path}")
+            sys.exit(1)
+    else:
+        db.init_db(DB_PATH)
+        passed_ids = get_passed_conversation_ids(DB_PATH)
+        if not passed_ids:
+            print("No ingested conversations found. Run ingest_conversations first.")
+            sys.exit(1)
+        to_process = [c for c in conversations if c.get("conversation_id") in passed_ids]
+
+    if write_db:
+        db.init_db(DB_PATH)
+    elif single:
+        print("Dry run: nothing will be written to the database.")
+
+    client = anthropic.Anthropic()
     print(f"Processing {len(to_process)} conversations...")
 
     total_topics = 0
@@ -177,15 +205,20 @@ def main() -> None:
         topics, diag = extract_topics(raw, client)
         total_topics += len(topics)
 
-        for topic in topics:
-            saved = db.save_topic(topic, DB_PATH)
-            db.save_topic_mention(
-                TopicMention(topic_id=saved.id, conversation_id=conv_id),
-                DB_PATH,
-            )
+        if write_db:
+            for topic in topics:
+                saved = db.save_topic(topic, DB_PATH)
+                db.save_topic_mention(
+                    TopicMention(topic_id=saved.id, conversation_id=conv_id),
+                    DB_PATH,
+                )
 
         print(f"[{i}/{len(to_process)}] {title[:60]} → {len(topics)} topics")
         print(f"    {format_diag(diag)}")
+        if single:
+            for t in topics:
+                by = f" ({t.author})" if t.author else ""
+                print(f"    - [{t.type}] {t.name}{by}")
         if not topics:
             # Empty result: show exactly what the model returned.
             print(f"    EMPTY. raw tool input: {json.dumps(diag['raw_tool_input'])}")
