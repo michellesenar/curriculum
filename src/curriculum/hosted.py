@@ -10,8 +10,12 @@ Requests are stateless: no session lives on the server between calls, so there
 is nothing that could carry one tester's database into another tester's request.
 """
 
+import json
+import logging
 import os
 import re
+import sys
+import time
 from datetime import datetime, timezone
 
 from mcp.server.mcpserver import MCPServer
@@ -40,6 +44,65 @@ HOSTED_TOOLS = [
 ]
 
 _PATH = re.compile(r"^/c/([A-Za-z0-9_-]+)(/.*)$")
+
+# Request log: one JSON line per tester request, on stdout (so `fly logs` shows it).
+# It records what was called, never what was said. No URL or path (the token is in
+# it), no request or response content, no error text. Tool and method names are
+# only logged if they match a fixed list, so client-supplied text can't get in.
+_requests = logging.getLogger("curriculum.requests")
+_TOOL_NAMES = {fn.__name__ for fn in HOSTED_TOOLS}
+_RPC_METHODS = {
+    "initialize", "ping", "tools/list", "tools/call",
+    "resources/list", "prompts/list", "notifications/initialized",
+}
+_MAX_CAPTURE = 1_000_000  # bytes of body kept for summarising; beyond this, skip it
+
+
+def _summarize_request(body: bytes) -> tuple[str | None, str | None]:
+    """(rpc method, tool name) from a JSON-RPC request body; None where unknown or not allowed."""
+    try:
+        msg = json.loads(body)
+    except ValueError:
+        return None, None
+    if isinstance(msg, list):  # a batch: summarise its first message
+        msg = msg[0] if msg else None
+    if not isinstance(msg, dict):
+        return None, None
+    method = msg.get("method")
+    method = method if method in _RPC_METHODS else "other"
+    tool = None
+    if method == "tools/call":
+        params = msg.get("params")
+        name = params.get("name") if isinstance(params, dict) else None
+        tool = name if name in _TOOL_NAMES else "unknown"
+    return method, tool
+
+
+def _summarize_response(body: bytes) -> str | None:
+    """'ok', 'tool_error' or 'rpc_error' from a JSON-RPC response body; None if unreadable."""
+    try:
+        msg = json.loads(body)
+    except ValueError:
+        return None
+    if isinstance(msg, list):
+        msg = msg[0] if msg else None
+    if not isinstance(msg, dict):
+        return None
+    if "error" in msg:
+        return "rpc_error"
+    result = msg.get("result")
+    if isinstance(result, dict) and result.get("isError"):
+        return "tool_error"
+    return "ok"
+
+
+def _emit(**fields) -> None:
+    """Write one request-log line. Logging must never break a request."""
+    try:
+        record = {"ts": datetime.now(timezone.utc).isoformat(timespec="seconds"), **fields}
+        _requests.info(json.dumps(record, separators=(",", ":")))
+    except Exception:
+        pass
 
 
 def build_mcp() -> MCPServer:
@@ -76,20 +139,55 @@ class TokenRouter:
         match = _PATH.match(scope["path"])
         db_path = tenants.resolve(match.group(1), self.root) if match else None
         if db_path is None:
+            _emit(tenant=None, event="bad_link")
             await _not_found(send)
             return
 
+        tenant = db_path.stem  # the internal tenant id, never the token
+
         if match.group(2) == "/export.csv":
             await _export(scope, send, db_path)
+            _emit(tenant=tenant, event="export")
             return
 
         scope = {**scope, "path": match.group(2)}
         scope["raw_path"] = scope["path"].encode()
+
+        # Peek at the request and response bodies to summarise them; pass both on untouched.
+        req_body, resp_body = bytearray(), bytearray()
+        status = None
+        error = None
+
+        async def peek_receive():
+            msg = await receive()
+            if msg["type"] == "http.request" and len(req_body) < _MAX_CAPTURE:
+                req_body.extend(msg.get("body", b""))
+            return msg
+
+        async def peek_send(msg):
+            nonlocal status
+            if msg["type"] == "http.response.start":
+                status = msg["status"]
+            elif msg["type"] == "http.response.body" and len(resp_body) < _MAX_CAPTURE:
+                resp_body.extend(msg.get("body", b""))
+            await send(msg)
+
+        started = time.monotonic()
         reset = server._tenant_db.set(db_path)
         try:
-            await self.app(scope, receive, send)
+            await self.app(scope, peek_receive, peek_send)
+        except Exception as e:
+            error = type(e).__name__
+            raise
         finally:
             server._tenant_db.reset(reset)
+            rpc_method, tool = _summarize_request(bytes(req_body)) if req_body else (None, None)
+            outcome = "server_error" if error else _summarize_response(bytes(resp_body)) if resp_body else None
+            _emit(
+                tenant=tenant, event="request", http=scope.get("method"),
+                rpc=rpc_method, tool=tool, status=status, outcome=outcome,
+                ms=round((time.monotonic() - started) * 1000), exc=error,
+            )
 
 
 async def _export(scope, send, db_path) -> None:
@@ -148,6 +246,12 @@ def main() -> None:
     host = os.environ.get("CURRICULUM_HOST", "127.0.0.1")
     port = int(os.environ.get("CURRICULUM_PORT", "8000"))
     # access_log off: request lines contain the token, and logs outlive links.
+    # Our own request log (see _emit) replaces it and never includes the path.
+    handler = logging.StreamHandler(sys.stdout)
+    handler.setFormatter(logging.Formatter("%(message)s"))
+    _requests.addHandler(handler)
+    _requests.setLevel(logging.INFO)
+    _requests.propagate = False
     uvicorn.run(create_app(), host=host, port=port, access_log=False)
 
 
