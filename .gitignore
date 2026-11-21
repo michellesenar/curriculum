@@ -14,3 +14,7 @@ data/
 
 # Secrets
 .env
+
+# Deployment config: copy fly.toml.example to fly.toml and fill in
+fly.toml
+conversations-*.json

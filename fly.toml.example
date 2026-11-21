@@ -1,5 +1,10 @@
-# Fly.io config for the hosted curriculum server.
+# Template for the Fly.io config. Copy to fly.toml (which is gitignored) and
+# replace every YOUR-APP-NAME with your own app name.
 #
+# Optional: instead of keeping the two CURRICULUM_* host values below in the file,
+# set them as Fly secrets and delete them from [env]:
+#   fly secrets set CURRICULUM_ALLOWED_HOSTS=YOUR-APP-NAME.fly.dev \
+#                   CURRICULUM_PUBLIC_URL=https://YOUR-APP-NAME.fly.dev
 # Before the first deploy:
 #   1. The app name below is also in CURRICULUM_ALLOWED_HOSTS and
 #      CURRICULUM_PUBLIC_URL. If you ever rename the app, change all three.
